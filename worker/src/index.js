@@ -54,7 +54,7 @@ export default {
       }
       if (request.method === "GET" && parts[0] === "v1" && parts[1] === "job" && JOB.test(parts[2] ?? "")) {
         if (parts.length === 3) return await status(parts[2], env, ctx);
-        if (parts.length === 4 && parts[3] === "lib") return library(parts[2]);
+        if (parts.length === 4 && parts[3] === "lib") return await library(parts[2], request);
       }
       return answer(404, { error: NOT_HERE });
     } catch (e) {
@@ -138,12 +138,26 @@ async function waiting(job, env, ctx) {
   return running(job, env, ctx);
 }
 
-/** The finished library, where GitHub serves it (with Range, for a download that goes on). */
-function library(job) {
-  return new Response(null, {
-    status: 302,
-    headers: { Location: `${DOWNLOADS}/${RESULTS}/${job}.so` },
-  });
+/**
+ * The finished library. A download that goes on from where it stopped (`Range: bytes=N-`, N > 0)
+ * is sent to GitHub, which answers 206 with the rest. One from the start comes through here as a
+ * 200: the game asks for it with `bytes=0-` and takes a 206 as more of a file it already has
+ * (0.8.0's `fetch_library` opens it to append), and GitHub answers `bytes=0-` with 206, so a
+ * redirect there failed every first download with "No such file or directory (os error 2)".
+ */
+async function library(job, request) {
+  const url = `${DOWNLOADS}/${RESULTS}/${job}.so`;
+  const from = /^bytes=(\d+)-$/.exec(request.headers.get("Range") ?? "");
+  if (from && Number(from[1]) > 0) {
+    return new Response(null, { status: 302, headers: { Location: url } });
+  }
+  const upstream = await fetch(url, { redirect: "follow" });
+  if (upstream.status === 404) return answer(404, { error: "No such build. Compile again." });
+  if (!upstream.ok) throw new Error(`${job}.so: ${upstream.status}`);
+  const headers = { "Content-Type": "application/octet-stream", "Cache-Control": "no-store" };
+  const length = upstream.headers.get("Content-Length");
+  if (length) headers["Content-Length"] = length;
+  return new Response(upstream.body, { status: 200, headers });
 }
 
 /** The job of these mods on this commit: the same mods ask for the same build. */

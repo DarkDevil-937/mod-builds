@@ -152,9 +152,33 @@ test("a job on its way says it builds, and the library is GitHub's download", as
   const status = await (await call("GET", `/v1/job/${job}`)).json();
   assert.equal(status.state, "building");
   assert.ok(Number.isInteger(status.seconds), "whole seconds, as the game reads them");
-  const lib = await call("GET", `/v1/job/${job}/lib`);
-  assert.equal(lib.status, 302);
-  assert.equal(lib.headers.get("Location"), `https://github.com/${REPO}/releases/download/results/${job}.so`);
+});
+
+test("a library from the start is a 200 the game can write; one that goes on is GitHub's 206", async () => {
+  const job = "0123456789abcdef01234567";
+  const library = new Uint8Array(4096).map((_, i) => i % 251);
+  github.assets.results.set(`${job}.so`, library);
+  // 0.8.0 asks with bytes=0- and appends on a 206: the first answer has to be a 200, whole.
+  for (const range of ["bytes=0-", null]) {
+    const response = await worker.fetch(
+      new Request(`https://starling-compile.example/v1/job/${job}/lib`, {
+        headers: range ? { Range: range } : {},
+      }),
+      env,
+      ctx,
+    );
+    assert.equal(response.status, 200, `Range ${range}`);
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), library);
+  }
+  const resumed = await worker.fetch(
+    new Request(`https://starling-compile.example/v1/job/${job}/lib`, { headers: { Range: "bytes=1000-" } }),
+    env,
+    ctx,
+  );
+  assert.equal(resumed.status, 302);
+  assert.equal(resumed.headers.get("Location"), `https://github.com/${REPO}/releases/download/results/${job}.so`);
+  const missing = await call("GET", "/v1/job/ffffffffffffffffffffffff/lib");
+  assert.equal(missing.status, 404);
 });
 
 test("a job on its way is told after a hold, so every game asks less often; a failure at once", async () => {
