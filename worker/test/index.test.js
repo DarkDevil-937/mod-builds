@@ -61,7 +61,8 @@ class GitHub {
 }
 
 let github, cache, waiting;
-const env = { GITHUB_TOKEN: "secret" };
+// No hold in the tests but the one that tests it.
+const env = { GITHUB_TOKEN: "secret", HOLD_MS: 0 };
 const ctx = { waitUntil: (p) => waiting.push(p) };
 
 beforeEach(() => {
@@ -154,6 +155,24 @@ test("a job on its way says it builds, and the library is GitHub's download", as
   const lib = await call("GET", `/v1/job/${job}/lib`);
   assert.equal(lib.status, 302);
   assert.equal(lib.headers.get("Location"), `https://github.com/${REPO}/releases/download/results/${job}.so`);
+});
+
+test("a job on its way is told after a hold, so every game asks less often; a failure at once", async () => {
+  const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
+  env.HOLD_MS = 300;
+  try {
+    let started = Date.now();
+    assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "building");
+    assert.ok(Date.now() - started >= 290, "held");
+    const failed = { state: "failed", error: "error[E0425]", settled: true, at: Date.now() / 1000 + 60 };
+    github.assets.results.set(`${job}.failed.json`, new TextEncoder().encode(JSON.stringify(failed)));
+    cache.entries.clear();
+    started = Date.now();
+    assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "failed");
+    assert.ok(Date.now() - started < 290, "not held");
+  } finally {
+    env.HOLD_MS = 0;
+  }
 });
 
 test("a run seen on GitHub from another location is queued or building", async () => {

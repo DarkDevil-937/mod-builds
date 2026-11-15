@@ -33,6 +33,8 @@ export const PER_DAY = 1500;
 const DAY = 24 * 3600;
 // How long a build may take before the game is told it is lost (its own wait is 90 minutes).
 const LONGEST = 80 * 60;
+// How long the answer about a job on its way is held (`status`).
+const HOLD_MS = 6000;
 
 const JOB = /^[0-9a-f]{24}$/;
 const VERSION = /^\d+(\.\d+){1,3}$/;
@@ -103,22 +105,37 @@ async function build(request, url, env, ctx) {
   return answer(200, { job });
 }
 
-/** What the game shows while it waits, and the library's checksum once it is there. */
+/**
+ * What the game shows while it waits, and the library's checksum once it is there. A job still on
+ * its way is answered after HOLD_MS: the game asks again 2 s after each answer, so holding it
+ * makes every Starling, old ones too, ask about four times less while it waits (the free plan
+ * counts requests). Its read waits 40 s, far beyond the hold.
+ */
 async function status(job, env, ctx) {
   const done = await published(`${job}.json`, ctx);
   if (done) return answer(200, done);
+  const told = await waiting(job, env, ctx);
+  const hold = Number(env.HOLD_MS ?? HOLD_MS);
+  if (hold > 0 && (told?.state === "building" || told?.state === "queued")) {
+    await new Promise((resolve) => setTimeout(resolve, hold));
+    const doneSince = await published(`${job}.json`, ctx);
+    if (doneSince) return answer(200, doneSince);
+  }
+  return told ? answer(200, told) : answer(404, { error: "No such job." });
+}
+
+/** A job not done: its failure or how it goes, or null when there is none. */
+async function waiting(job, env, ctx) {
   const failure = await failureOf(job, ctx);
   const asked = await recall(`asked/${job}`);
   // A failure the build ran again since is old news.
   if (failure && !(asked && asked.at > (failure.at ?? 0))) {
     const { state, error, settled } = failure;
-    return answer(200, { state, error, settled: Boolean(settled) });
+    return { state, error, settled: Boolean(settled) };
   }
   // Whole seconds: the game reads them as an integer (`as_u64`), and a fraction reads as none.
-  if (asked) return answer(200, { state: "building", seconds: Math.max(0, Math.floor(now() - asked.at)) });
-  const run = await running(job, env, ctx);
-  if (run) return answer(200, run);
-  return answer(404, { error: "No such job." });
+  if (asked) return { state: "building", seconds: Math.max(0, Math.floor(now() - asked.at)) };
+  return running(job, env, ctx);
 }
 
 /** The finished library, where GitHub serves it (with Range, for a download that goes on). */
