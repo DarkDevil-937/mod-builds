@@ -1,0 +1,9 @@
+{
+  "name": "starling-compile",
+  "private": true,
+  "type": "module",
+  "description": "Starling's Compile service on Cloudflare Workers (see src/index.js)",
+  "scripts": {
+    "test": "node --test"
+  }
+}

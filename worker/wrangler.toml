@@ -1,0 +1,10 @@
+# Starling's Compile service (src/index.js). Deploy from this folder:
+#   npx wrangler login
+#   npx wrangler deploy
+#   npx wrangler secret put GITHUB_TOKEN < <the file with the token>
+# Then packaging/android/build-server.txt in starling-client/starling (branch starling) says the
+# address wrangler printed, and every Starling since 0.8.0 compiles here.
+name = "starling-compile"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
