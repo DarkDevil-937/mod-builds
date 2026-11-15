@@ -1,7 +1,7 @@
 // The Compile service against a GitHub of its own (this file's), with no network: node --test.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { createDecipheriv, createHash } from "node:crypto";
+import { createDecipheriv, createHash, generateKeyPairSync, verify } from "node:crypto";
 import worker, { jobOf, seal, PER_ADDRESS, MAX_BODY } from "../src/index.js";
 
 const REPO = "starling-client/mod-builds";
@@ -41,7 +41,8 @@ class GitHub {
       return bytes ? new Response(bytes) : new Response("Not Found", { status: 404 });
     }
     this.calls++;
-    assert.equal(init.headers?.Authorization, "Bearer secret", "every API call carries the token");
+    if (url.pathname.startsWith("/app/")) return this.app(url, method, init);
+    assert.equal(init.headers?.Authorization, `Bearer ${this.token}`, "every API call carries the token");
     if (url.host === "uploads.github.com") {
       const id = url.pathname.split("/")[5];
       const tag = { 1: "requests", 2: "results" }[id];
@@ -63,7 +64,35 @@ class GitHub {
     }
     return json(404, { message: "Not Found" });
   }
+
+  /** The GitHub App's own calls: signed with its key, they give the installation's token. */
+  app(url, method, init) {
+    const json = (code, body) => new Response(JSON.stringify(body), { status: code });
+    const [head, claims, signature] = init.headers.Authorization.replace("Bearer ", "").split(".");
+    const signed = verify("RSA-SHA256", Buffer.from(`${head}.${claims}`), appKeys.publicKey, Buffer.from(signature, "base64url"));
+    const { iat, exp, iss } = JSON.parse(Buffer.from(claims, "base64url"));
+    if (!signed || iss !== "5775282" || exp - iat > 600) return json(401, { message: "Bad credentials" });
+    if (method === "GET" && url.pathname === "/app/installations") {
+      return json(200, [
+        { id: 12, account: { login: "someone-else" } },
+        { id: 77, account: { login: "starling-client" } },
+      ]);
+    }
+    if (method === "POST" && url.pathname === "/app/installations/77/access_tokens") {
+      this.minted++;
+      return json(201, { token: "ghs_test", expires_at: new Date(Date.now() + 3600e3).toISOString() });
+    }
+    return json(404, { message: "Not Found" });
+  }
+  token = "secret";
+  minted = 0;
 }
+
+const appKeys = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: "spki", format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+});
 
 let github, cache, waiting;
 // No hold in the tests but the one that tests it.
@@ -78,14 +107,14 @@ beforeEach(() => {
   globalThis.caches = { default: cache };
 });
 
-async function call(method, path, { body, address = "203.0.113.7" } = {}) {
+async function call(method, path, { body, address = "203.0.113.7", as = env } = {}) {
   const response = await worker.fetch(
     new Request(`https://starling-compile.example${path}`, {
       method,
       body,
       headers: { "CF-Connecting-IP": address },
     }),
-    env,
+    as,
     ctx,
   );
   await Promise.all(waiting.splice(0));
@@ -339,6 +368,20 @@ test("a job whose run ended without an answer is told so, and asking again build
   assert.deepEqual(told, { state: "failed", error: "The build on GitHub did not finish. Try again.", settled: false });
   await call("POST", "/v1/build?version=0.8.0", { body: mods });
   assert.equal(github.dispatched.length, 2, "built again");
+});
+
+test("with the GitHub App, calls carry the installation's token, made once while it lasts", async () => {
+  const app = { GITHUB_APP_ID: " 5775282\n", GITHUB_APP_KEY: appKeys.privateKey, HOLD_MS: 0 };
+  github.token = "ghs_test";
+  const response = await call("POST", "/v1/build?version=0.8.0", { body: mods, as: app });
+  assert.equal(response.status, 200);
+  assert.equal(github.dispatched.length, 1);
+  const { job } = await response.json();
+  assert.equal((await call("GET", `/v1/job/${job}`, { as: app })).status, 200);
+  const other = new TextEncoder().encode("other mods ".repeat(100));
+  assert.equal((await call("POST", "/v1/build?version=0.8.0", { body: other, as: app })).status, 200);
+  assert.equal(github.dispatched.length, 2);
+  assert.equal(github.minted, 1, "one token for every call while it lasts");
 });
 
 test("GitHub out of reach is a 503 with words", async () => {

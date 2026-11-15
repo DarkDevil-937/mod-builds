@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Keeps the releases the Compile service uses small: sealed mods older than a day (a run that never
-came), and builds older than RESULT_DAYS or beyond the newest RESULTS_KEPT (a release holds 1000 assets
-at most). Asking for the same mods again builds them again."""
+"""Keeps the releases the Compile service uses small: sealed mods older than six hours (a run that never
+came, or one whose answer could not be put up: a build waits and runs well under that), and builds
+older than RESULT_DAYS or beyond the newest RESULTS_KEPT (a release holds 1000 assets at most). Asking
+for the same mods again builds them again."""
 import calendar
 import json
 import os
@@ -11,7 +12,7 @@ import time
 RESULT_DAYS = 14
 RESULTS_KEPT = 900
 LEGACY_KEPT = 600
-REQUEST_DAYS = 1
+REQUEST_DAYS = 0.25
 
 
 def gh_json(*args):

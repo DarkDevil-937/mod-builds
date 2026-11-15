@@ -1,8 +1,8 @@
 name: clean
-# The Compile service's releases kept small (scripts/clean.py): once a day, and by hand.
+# The Compile service's releases kept small (scripts/clean.py): every six hours, and by hand.
 on:
   schedule:
-    - cron: '17 4 * * *'
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 permissions:
   contents: write

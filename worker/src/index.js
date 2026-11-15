@@ -335,7 +335,7 @@ async function upload(env, ctx, tag, name, bytes) {
   const id = await releaseId(env, ctx, tag);
   const response = await fetch(
     `${UPLOADS}/repos/${REPO}/releases/${id}/assets?name=${encodeURIComponent(name)}`,
-    { method: "POST", headers: { ...headers(env), "Content-Type": "application/octet-stream" }, body: bytes },
+    { method: "POST", headers: { ...(await headers(env)), "Content-Type": "application/octet-stream" }, body: bytes },
   );
   if (!response.ok) throw new Error(`upload ${tag}/${name}: ${response.status} ${await response.text()}`);
 }
@@ -353,7 +353,7 @@ async function releaseId(env, ctx, tag) {
 async function github(env, method, path, payload) {
   const response = await fetch(`${API}/repos/${REPO}${path}`, {
     method,
-    headers: { ...headers(env), ...(payload ? { "Content-Type": "application/json" } : {}) },
+    headers: { ...(await headers(env)), ...(payload ? { "Content-Type": "application/json" } : {}) },
     body: payload ? JSON.stringify(payload) : undefined,
   });
   if (!response.ok) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
@@ -361,13 +361,59 @@ async function github(env, method, path, payload) {
   return text ? JSON.parse(text) : null;
 }
 
-function headers(env) {
+async function headers(env) {
+  return { ...plainHeaders(), Authorization: `Bearer ${await token(env)}` };
+}
+
+function plainHeaders() {
   return {
-    Authorization: `Bearer ${env.GITHUB_TOKEN}`,
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "starling-compile",
   };
+}
+
+// The GitHub App's installation token, while it lasts, in this isolate.
+let installation = null;
+
+/**
+ * The token the service acts with. With the GitHub App (secrets GITHUB_APP_ID and GITHUB_APP_KEY,
+ * the App's private key as PKCS#8 PEM; the App is installed on mod-builds alone), an installation
+ * token: it has its own hourly limit, and the builds are the App's, not a person's (no failure
+ * mails to the owner). Without it, GITHUB_TOKEN, a person's token, which shares that person's
+ * 5,000 calls an hour with everything else they do.
+ */
+async function token(env) {
+  if (!env.GITHUB_APP_ID || !env.GITHUB_APP_KEY) return env.GITHUB_TOKEN;
+  if (installation && installation.until > now() + 120) return installation.token;
+  const app = { ...plainHeaders(), Authorization: `Bearer ${await appJwt(env)}` };
+  const listed = await fetch(`${API}/app/installations`, { headers: app });
+  if (!listed.ok) throw new Error(`the App's installations: ${listed.status}`);
+  const owner = REPO.split("/")[0];
+  const id = (await listed.json()).find((i) => i.account?.login === owner)?.id;
+  if (!id) throw new Error(`the App is not installed on ${owner}`);
+  const made = await fetch(`${API}/app/installations/${id}/access_tokens`, { method: "POST", headers: app });
+  if (!made.ok) throw new Error(`the App's token: ${made.status}`);
+  const { token: value, expires_at: expires } = await made.json();
+  installation = { token: value, until: Date.parse(expires) / 1000 };
+  return value;
+}
+
+/** The App's own JWT (RS256, ten minutes at most), to ask for an installation token. */
+async function appJwt(env) {
+  const base64url = (bytes) =>
+    btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const part = (value) => base64url(new TextEncoder().encode(JSON.stringify(value)));
+  const at = Math.floor(now());
+  const unsigned = `${part({ alg: "RS256", typ: "JWT" })}.${part({ iat: at - 60, exp: at + 540, iss: String(env.GITHUB_APP_ID).trim() })}`;
+  const der = Uint8Array.from(atob(env.GITHUB_APP_KEY.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "")), (c) =>
+    c.charCodeAt(0),
+  );
+  const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
+  return `${unsigned}.${base64url(new Uint8Array(signature))}`;
 }
 
 /** Adds one to today's count of `name` unless it is at `limit`: whether it was below. */

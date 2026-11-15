@@ -4,7 +4,7 @@ Native mods are compiled into [Starling](https://github.com/starling-client/star
 
 - `worker/` is the service the game talks to, at the address in Starling's [`build-server.txt`](https://github.com/starling-client/starling/blob/starling/packaging/android/build-server.txt). It seals the mods (AES-256-CTR, a key for each build) into the `requests` release under a random name, and starts `build.yml` with the key in the run's inputs. The same mods on the same commit are the same job, so a build is never done twice. `npm test` there runs its tests, with no network.
 - `build.yml` compiles one player's mods. A mod's code runs while it compiles, so that happens in a sandbox with no network, and that job's token can only read this repository. A second job, which runs nothing from the mods, puts the library and its status in `results`, and deletes the sealed mods.
-- `clean.yml` deletes old builds once a day.
+- `clean.yml` deletes old builds, and sealed mods no run took, every six hours.
 - `base.yml` makes the clean build cache for one version of the game. It only runs trusted code, and it's the only job that writes the cache.
 - `versions.json` says which commit each version of the game is.
 
