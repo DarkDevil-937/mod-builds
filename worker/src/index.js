@@ -35,6 +35,8 @@ const DAY = 24 * 3600;
 const LONGEST = 80 * 60;
 // How long the answer about a job on its way is held (`status`).
 const HOLD_MS = 6000;
+// How long this location keeps its look at the build line (`queue`).
+const QUEUE_SECONDS = 45;
 
 const JOB = /^[0-9a-f]{24}$/;
 const VERSION = /^\d+(\.\d+){1,3}$/;
@@ -133,9 +135,14 @@ async function waiting(job, env, ctx) {
     const { state, error, settled } = failure;
     return { state, error, settled: Boolean(settled) };
   }
+  const run = await running(job, env, ctx);
+  if (run) return run;
+  if (!asked) return null;
+  // Asked here but not in the queue as last seen: just asked (GitHub lists a run a few seconds
+  // after it is asked for), so at the end of the line; or on its way out, its answer not seen yet.
+  if (now() - asked.at < 120) return { state: "queued", ahead: (await queue(env, ctx)).queued.length };
   // Whole seconds: the game reads them as an integer (`as_u64`), and a fraction reads as none.
-  if (asked) return { state: "building", seconds: Math.max(0, Math.floor(now() - asked.at)) };
-  return running(job, env, ctx);
+  return { state: "building", seconds: Math.max(0, Math.floor(now() - asked.at)) };
 }
 
 /**
@@ -216,23 +223,48 @@ function failureOf(job, ctx) {
 
 /** The job's run on GitHub when it is queued or going: what the game is told of it. */
 async function running(job, env, ctx) {
-  const key = `run/${job}`;
-  const known = await recall(key);
-  if (known) return known.value;
-  const { workflow_runs: runs } = await github(
-    env,
-    "GET",
-    `/actions/workflows/${WORKFLOW}/runs?event=workflow_dispatch&per_page=100`,
-  );
-  const run = runs.find((r) => r.display_title === `build ${job}` && r.status !== "completed");
-  let value = null;
-  if (run?.status === "in_progress") {
-    const began = Date.parse(run.run_started_at ?? "") / 1000;
-    value = { state: "building", seconds: Number.isFinite(began) ? Math.max(0, Math.floor(now() - began)) : 0 };
-  } else if (run) {
-    value = { state: "queued", ahead: 0 };
+  const { queued, building } = await queue(env, ctx);
+  const title = `build ${job}`;
+  if (title in building) {
+    return { state: "building", seconds: Math.max(0, Math.floor(now() - building[title])) };
   }
-  ctx.waitUntil(remember(key, { value }, 20));
+  const place = queued.indexOf(title);
+  return place >= 0 ? { state: "queued", ahead: place } : null;
+}
+
+/**
+ * The build workflow's line on GitHub: the jobs waiting, oldest first, and when each running one
+ * began. Read once for everyone every QUEUE_SECONDS in this location, so a game in line learns
+ * its place ("In line: N before yours") without a call of its own: GitHub gives a token 5,000 a
+ * hour, and a busy hour has a hundred jobs in line asking every few seconds.
+ */
+async function queue(env, ctx) {
+  const known = await recall("queue");
+  if (known) return known.value;
+  const list = async (status) => {
+    const runs = [];
+    for (let page = 1; page <= 5; page++) {
+      const { workflow_runs: some } = await github(
+        env,
+        "GET",
+        `/actions/workflows/${WORKFLOW}/runs?event=workflow_dispatch&status=${status}&per_page=100&page=${page}`,
+      );
+      runs.push(...some);
+      if (some.length < 100) break;
+    }
+    return runs;
+  };
+  const queued = (await list("queued"))
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+    .map((r) => r.display_title);
+  const building = Object.fromEntries(
+    (await list("in_progress")).map((r) => [
+      r.display_title,
+      Date.parse(r.run_started_at ?? r.created_at ?? "") / 1000 || now(),
+    ]),
+  );
+  const value = { queued, building };
+  ctx.waitUntil(remember("queue", { value }, QUEUE_SECONDS));
   return value;
 }
 

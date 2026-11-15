@@ -55,7 +55,12 @@ class GitHub {
       this.dispatched.push(JSON.parse(init.body));
       return new Response(null, { status: 204 });
     }
-    if (path === "/actions/workflows/build.yml/runs") return json(200, { workflow_runs: this.runs });
+    if (path === "/actions/workflows/build.yml/runs") {
+      const status = url.searchParams.get("status");
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const runs = this.runs.filter((r) => !status || r.status === status);
+      return json(200, { workflow_runs: page === 1 ? runs : [] });
+    }
     return json(404, { message: "Not Found" });
   }
 }
@@ -150,8 +155,8 @@ test("mods built before are the same job, and nothing is built", async () => {
 test("a job on its way says it builds, and the library is GitHub's download", async () => {
   const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
   const status = await (await call("GET", `/v1/job/${job}`)).json();
-  assert.equal(status.state, "building");
-  assert.ok(Number.isInteger(status.seconds), "whole seconds, as the game reads them");
+  assert.equal(status.state, "queued", "just asked: in line until GitHub lists its run");
+  assert.ok(Number.isInteger(status.ahead), "a whole place, as the game reads it");
 });
 
 test("a library from the start is a 200 the game can write; one that goes on is GitHub's 206", async () => {
@@ -186,7 +191,7 @@ test("a job on its way is told after a hold, so every game asks less often; a fa
   env.HOLD_MS = 300;
   try {
     let started = Date.now();
-    assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "building");
+    assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "queued");
     assert.ok(Date.now() - started >= 290, "held");
     const failed = { state: "failed", error: "error[E0425]", settled: true, at: Date.now() / 1000 + 60 };
     github.assets.results.set(`${job}.failed.json`, new TextEncoder().encode(JSON.stringify(failed)));
@@ -201,11 +206,30 @@ test("a job on its way is told after a hold, so every game asks less often; a fa
 
 test("a run seen on GitHub from another location is queued or building", async () => {
   const job = "0123456789abcdef01234567";
-  github.runs = [{ display_title: `build ${job}`, status: "queued" }];
+  github.runs = [{ display_title: `build ${job}`, status: "queued", created_at: "2026-11-15T20:00:00Z" }];
   assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), { state: "queued", ahead: 0 });
   cache.clock += 60;
   github.runs = [{ display_title: `build ${job}`, status: "in_progress", run_started_at: new Date().toISOString() }];
   assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "building");
+});
+
+test("a job in line is told its place, from one look at the line for everyone", async () => {
+  const at = (minute) => `2026-11-15T20:${String(minute).padStart(2, "0")}:00Z`;
+  const jobs = ["aaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccc"];
+  // Listed newest first, as GitHub does.
+  github.runs = [
+    { display_title: `build ${jobs[2]}`, status: "queued", created_at: at(3) },
+    { display_title: `build ${jobs[1]}`, status: "queued", created_at: at(2) },
+    { display_title: `build ${jobs[0]}`, status: "queued", created_at: at(1) },
+  ];
+  const before = github.calls;
+  for (const [i, job] of jobs.entries()) {
+    assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), { state: "queued", ahead: i });
+  }
+  assert.equal(github.calls - before, 2, "one look at the line (queued and building) for all three");
+  // Just asked and not listed yet: at the end of the line, not lost.
+  const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
+  assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), { state: "queued", ahead: 3 });
 });
 
 test("a failure is told; one that may pass builds again when asked", async () => {
