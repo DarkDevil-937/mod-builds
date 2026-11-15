@@ -227,6 +227,11 @@ test("a job in line is told its place, from one look at the line for everyone", 
     assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), { state: "queued", ahead: i });
   }
   assert.equal(github.calls - before, 2, "one look at the line (queued and building) for all three");
+  // A job that moved from waiting to building after the line was read is found by a new look,
+  // not called lost.
+  const moved = "dddddddddddddddddddddddd";
+  github.runs.push({ display_title: `build ${moved}`, status: "in_progress", run_started_at: new Date().toISOString() });
+  assert.equal((await (await call("GET", `/v1/job/${moved}`)).json()).state, "building");
   // Just asked and not listed yet: at the end of the line, not lost.
   const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
   assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), { state: "queued", ahead: 3 });

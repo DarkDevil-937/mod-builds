@@ -223,8 +223,20 @@ function failureOf(job, ctx) {
 
 /** The job's run on GitHub when it is queued or going: what the game is told of it. */
 async function running(job, env, ctx) {
-  const { queued, building } = await queue(env, ctx);
   const title = `build ${job}`;
+  let found = placeIn(await queue(env, ctx), title);
+  // Not in the line as last seen: it moved since (from waiting to building, between two looks),
+  // or that look came back short. Look again before calling it lost, at most every 10 s here: a
+  // job told "No such job" is given up by the game.
+  if (!found && !(await recall("queue-fresh"))) {
+    await remember("queue-fresh", { at: now() }, 10);
+    found = placeIn(await queue(env, ctx, true), title);
+  }
+  return found;
+}
+
+/** Where `title` stands in the line `queue` read, or null when it is not in it. */
+function placeIn({ queued, building }, title) {
   if (title in building) {
     return { state: "building", seconds: Math.max(0, Math.floor(now() - building[title])) };
   }
@@ -238,8 +250,8 @@ async function running(job, env, ctx) {
  * its place ("In line: N before yours") without a call of its own: GitHub gives a token 5,000 a
  * hour, and a busy hour has a hundred jobs in line asking every few seconds.
  */
-async function queue(env, ctx) {
-  const known = await recall("queue");
+async function queue(env, ctx, fresh = false) {
+  const known = fresh ? null : await recall("queue");
   if (known) return known.value;
   const list = async (status) => {
     const runs = [];
