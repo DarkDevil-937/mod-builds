@@ -40,6 +40,10 @@ const HOLD_MS = 6000;
 // he and his tools do; the first day spent them all at 45 s and 10 s.
 const QUEUE_SECONDS = 120;
 const LOOK_AGAIN_SECONDS = 60;
+// A job asked this long ago, neither in line nor building and with no answer, is taken as lost:
+// its run ended without publishing (as when the results release was full).
+const LOST_SECONDS = 600;
+const DID_NOT_FINISH = "The build on GitHub did not finish. Try again.";
 
 const JOB = /^[0-9a-f]{24}$/;
 const VERSION = /^\d+(\.\d+){1,3}$/;
@@ -92,7 +96,12 @@ async function build(request, url, env, ctx) {
   const failure = await failureOf(job, ctx);
   if (failure?.settled) return answer(200, { job });
   const asked = await recall(`asked/${job}`);
-  if (asked && !(failure && (failure.at ?? 0) >= asked.at)) return answer(200, { job });
+  if (asked && !(failure && (failure.at ?? 0) >= asked.at)) {
+    // Still on its way, or not long enough asked to tell: the same job. One asked long ago and
+    // gone from the line without an answer is built again.
+    const gone = now() - asked.at > LOST_SECONDS && !(await running(job, env, ctx));
+    if (!gone) return answer(200, { job });
+  }
   const run = failure ? null : await running(job, env, ctx, false);
   if (run && !run.unknown) return answer(200, { job });
 
@@ -145,8 +154,12 @@ async function waiting(job, env, ctx) {
     const line = await recall("queue");
     return { state: "queued", ahead: line?.value.queued.length ?? 0 };
   }
-  const run = await running(job, env, ctx, !asked);
+  const lost = asked && now() - asked.at > LOST_SECONDS;
+  const run = await running(job, env, ctx, !asked || lost);
   if (run && !run.unknown) return run;
+  // Asked long ago and neither in line nor building, with no answer: its run ended without
+  // publishing one. The game is told so, and asking again builds it again.
+  if (lost && !run) return { state: "failed", error: DID_NOT_FINISH, settled: false };
   if (!asked) {
     // GitHub can't be asked right now: the game tries again, not "lost".
     if (run?.unknown) throw new Error(`the line of ${job} can't be read`);

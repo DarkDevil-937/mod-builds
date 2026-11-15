@@ -330,6 +330,17 @@ test("GitHub's hourly limit spent: a job asked here keeps going, an unknown one 
   assert.equal(unknown.status, 503, "can't tell: the game tries again, not 'lost'");
 });
 
+test("a job whose run ended without an answer is told so, and asking again builds it again", async () => {
+  const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
+  // Asked 15 minutes ago; its run is gone from the line and published nothing.
+  const asked = cache.entries.get(`https://starling-compile.cache/asked/${job}`);
+  asked.body = JSON.stringify({ at: Date.now() / 1000 - 900 });
+  const told = await (await call("GET", `/v1/job/${job}`)).json();
+  assert.deepEqual(told, { state: "failed", error: "The build on GitHub did not finish. Try again.", settled: false });
+  await call("POST", "/v1/build?version=0.8.0", { body: mods });
+  assert.equal(github.dispatched.length, 2, "built again");
+});
+
 test("GitHub out of reach is a 503 with words", async () => {
   globalThis.fetch = async () => {
     throw new TypeError("network down");
