@@ -41,9 +41,9 @@ class Publish(unittest.TestCase):
     def test_a_build_puts_the_library_up_before_its_status(self):
         self.built(extra="what a mod could add")
         calls = self.run_publish()
-        self.assertEqual(calls[0], ("release", "upload", "results", f"{JOB}.so"))
-        self.assertEqual(calls[1], ("release", "upload", "results", f"{JOB}.json"))
-        self.assertIn(("release", "delete-asset", "results", f"{JOB}.failed.json"), calls)
+        self.assertEqual(calls[0], ("release", "upload", "results-0", f"{JOB}.so"))
+        self.assertEqual(calls[1], ("release", "upload", "results-0", f"{JOB}.json"))
+        self.assertIn(("release", "delete-asset", "results-0", f"{JOB}.failed.json"), calls)
         self.assertEqual(calls[-1], ("release", "delete-asset", "requests", f"{ASK}.bin"))
         status = json.loads(self.uploaded(f"{JOB}.json"))
         self.assertEqual(set(status), {"state", "sha256", "size", "build"})
@@ -52,7 +52,7 @@ class Publish(unittest.TestCase):
     def test_a_library_unlike_its_status_is_not_served(self):
         self.built(size=999)
         calls = self.run_publish()
-        self.assertEqual(calls[0], ("release", "upload", "results", f"{JOB}.failed.json"))
+        self.assertEqual(calls[0], ("release", "upload", "results-0", f"{JOB}.failed.json"))
         self.assertFalse(json.loads(self.uploaded(f"{JOB}.failed.json"))["settled"])
 
     def test_the_mods_own_failure_is_told_as_it_is(self):

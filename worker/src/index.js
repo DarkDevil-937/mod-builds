@@ -164,18 +164,38 @@ async function waiting(job, env, ctx) {
  * redirect there failed every first download with "No such file or directory (os error 2)".
  */
 async function library(job, request) {
-  const url = `${DOWNLOADS}/${RESULTS}/${job}.so`;
+  const name = `${job}.so`;
   const from = /^bytes=(\d+)-$/.exec(request.headers.get("Range") ?? "");
   if (from && Number(from[1]) > 0) {
-    return new Response(null, { status: 302, headers: { Location: url } });
+    const shard = await fetch(`${DOWNLOADS}/${shardOf(name)}/${name}`, { method: "HEAD", redirect: "follow" });
+    const tag = shard.status === 404 ? RESULTS : shardOf(name);
+    return new Response(null, { status: 302, headers: { Location: `${DOWNLOADS}/${tag}/${name}` } });
   }
-  const upstream = await fetch(url, { redirect: "follow" });
+  const upstream = await fetchResult(name);
   if (upstream.status === 404) return answer(404, { error: "No such build. Compile again." });
   if (!upstream.ok) throw new Error(`${job}.so: ${upstream.status}`);
   const headers = { "Content-Type": "application/octet-stream", "Cache-Control": "no-store" };
   const length = upstream.headers.get("Content-Length");
   if (length) headers["Content-Length"] = length;
   return new Response(upstream.body, { status: 200, headers });
+}
+
+/**
+ * The release a build's files go to: a release holds 1000 assets at most, and the first evening
+ * filled `results`, so builds are spread over results-0 to results-f by the job's first hex digit
+ * (scripts/publish.py).
+ */
+function shardOf(name) {
+  return `results-${name[0]}`;
+}
+
+/** One of a build's files: in its shard, or in `results`, where the first evening's builds are. */
+async function fetchResult(name) {
+  for (const tag of [shardOf(name), RESULTS]) {
+    const response = await fetch(`${DOWNLOADS}/${tag}/${name}`, { redirect: "follow" });
+    if (response.status !== 404) return response;
+  }
+  return new Response("Not Found", { status: 404 });
 }
 
 /** The job of these mods on this commit: the same mods ask for the same build. */
@@ -216,7 +236,7 @@ async function published(name, ctx, seconds = 3600) {
   const key = `published/${name}`;
   const known = await recall(key);
   if (known) return known.value;
-  const response = await fetch(`${DOWNLOADS}/${RESULTS}/${name}`, { redirect: "follow" });
+  const response = await fetchResult(name);
   if (response.status === 404) {
     ctx.waitUntil(remember(key, { value: null }, 15));
     return null;

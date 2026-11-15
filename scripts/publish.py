@@ -55,18 +55,21 @@ def publish(result, job, ask, built, gh, out):
     if not re.fullmatch(r"[0-9a-f]{24}", job) or not re.fullmatch(r"[0-9a-f]{32}", ask):
         sys.exit(f"Not a request: {job} {ask}")
     out.mkdir(parents=True, exist_ok=True)
+    # A release holds 1000 assets at most: the builds are spread over results-0 to results-f by
+    # the job's first hex digit (worker/ looks there, then in the old `results`).
+    results = f"results-{job[0]}"
     state, status, library = answer(result, built)
     if state == "done":
         # The library first: its status is what says it is there.
         so = out / f"{job}.so"
         os.replace(library, so)
-        gh("release", "upload", "results", str(so), "--clobber")
+        gh("release", "upload", results, str(so), "--clobber")
         (out / f"{job}.json").write_text(json.dumps(status))
-        gh("release", "upload", "results", str(out / f"{job}.json"), "--clobber")
-        gh("release", "delete-asset", "results", f"{job}.failed.json", "-y", check=False)
+        gh("release", "upload", results, str(out / f"{job}.json"), "--clobber")
+        gh("release", "delete-asset", results, f"{job}.failed.json", "-y", check=False)
     else:
         (out / f"{job}.failed.json").write_text(json.dumps(status))
-        gh("release", "upload", "results", str(out / f"{job}.failed.json"), "--clobber")
+        gh("release", "upload", results, str(out / f"{job}.failed.json"), "--clobber")
     gh("release", "delete-asset", "requests", f"{ask}.bin", "-y", check=False)
     print(json.dumps({k: v for k, v in status.items() if k != "build"}))
 

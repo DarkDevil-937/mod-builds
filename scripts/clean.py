@@ -10,6 +10,7 @@ import time
 
 RESULT_DAYS = 14
 RESULTS_KEPT = 900
+LEGACY_KEPT = 600
 REQUEST_DAYS = 1
 
 
@@ -40,7 +41,10 @@ def stale(listed, days, kept, now):
 
 def main():
     now = time.time()
-    for tag, days, kept in (("requests", REQUEST_DAYS, 10**9), ("results", RESULT_DAYS, RESULTS_KEPT)):
+    shards = [(f"results-{c}", RESULT_DAYS, RESULTS_KEPT) for c in "0123456789abcdef"]
+    # "results" is the release before the shards: a release holds 1000 assets at most, and one
+    # filled in the first evening, so builds go to results-<first hex digit of the job> now.
+    for tag, days, kept in [("requests", REQUEST_DAYS, 10**9), ("results", RESULT_DAYS, LEGACY_KEPT), *shards]:
         gone = stale(assets(tag), days, kept, now)
         for asset in gone:
             subprocess.run(

@@ -35,7 +35,7 @@ class GitHub {
     if (url.href === `https://raw.githubusercontent.com/${REPO}/main/versions.json`) {
       return json(200, { "0.8.0": COMMIT });
     }
-    const download = url.href.match(new RegExp(`^https://github.com/${REPO}/releases/download/(\\w+)/(.+)$`));
+    const download = url.href.match(new RegExp(`^https://github.com/${REPO}/releases/download/([\\w-]+)/(.+)$`));
     if (download) {
       const bytes = this.assets[download[1]]?.get(download[2]);
       return bytes ? new Response(bytes) : new Response("Not Found", { status: 404 });
@@ -157,6 +157,28 @@ test("a job on its way says it builds, and the library is GitHub's download", as
   const status = await (await call("GET", `/v1/job/${job}`)).json();
   assert.equal(status.state, "queued", "just asked: in line until GitHub lists its run");
   assert.ok(Number.isInteger(status.ahead), "a whole place, as the game reads it");
+});
+
+test("a build in its shard release is found before the old results release", async () => {
+  const job = "7123456789abcdef01234567";
+  const done = { state: "done", sha256: "b".repeat(64), size: 4, build: {} };
+  github.assets["results-7"] = new Map([
+    [`${job}.json`, new TextEncoder().encode(JSON.stringify(done))],
+    [`${job}.so`, new Uint8Array([1, 2, 3, 4])],
+  ]);
+  assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), done);
+  const lib = await worker.fetch(
+    new Request(`https://starling-compile.example/v1/job/${job}/lib`, { headers: { Range: "bytes=0-" } }),
+    env,
+    ctx,
+  );
+  assert.deepEqual(new Uint8Array(await lib.arrayBuffer()), new Uint8Array([1, 2, 3, 4]));
+  const resumed = await worker.fetch(
+    new Request(`https://starling-compile.example/v1/job/${job}/lib`, { headers: { Range: "bytes=2-" } }),
+    env,
+    ctx,
+  );
+  assert.equal(resumed.headers.get("Location"), `https://github.com/${REPO}/releases/download/results-7/${job}.so`);
 });
 
 test("a library from the start is a 200 the game can write; one that goes on is GitHub's 206", async () => {
