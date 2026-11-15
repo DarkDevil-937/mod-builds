@@ -208,7 +208,7 @@ test("a run seen on GitHub from another location is queued or building", async (
   const job = "0123456789abcdef01234567";
   github.runs = [{ display_title: `build ${job}`, status: "queued", created_at: "2026-11-15T20:00:00Z" }];
   assert.deepEqual(await (await call("GET", `/v1/job/${job}`)).json(), { state: "queued", ahead: 0 });
-  cache.clock += 60;
+  cache.clock += 130;
   github.runs = [{ display_title: `build ${job}`, status: "in_progress", run_started_at: new Date().toISOString() }];
   assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "building");
 });
@@ -289,6 +289,23 @@ test("anything else is not here, and an unknown job is lost", async () => {
   assert.equal((await call("GET", "/")).status, 404);
   assert.equal((await call("GET", "/v1/github/0123")).status, 404);
   assert.equal((await call("GET", "/v1/job/0123456789abcdef01234567")).status, 404);
+});
+
+test("GitHub's hourly limit spent: a job asked here keeps going, an unknown one is retried", async () => {
+  const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
+  const limited = github.fetch.bind(github);
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.host === "api.github.com") return new Response('{"message":"API rate limit exceeded"}', { status: 403 });
+    return limited(input, init);
+  };
+  // Asked five minutes ago: past the "just asked" answer, so its place would be looked up.
+  const asked = cache.entries.get(`https://starling-compile.cache/asked/${job}`);
+  asked.body = JSON.stringify({ at: Date.now() / 1000 - 300 });
+  const told = await (await call("GET", `/v1/job/${job}`)).json();
+  assert.equal(told.state, "building", "asked here: still building, not an error");
+  const unknown = await call("GET", "/v1/job/eeeeeeeeeeeeeeeeeeeeeeee");
+  assert.equal(unknown.status, 503, "can't tell: the game tries again, not 'lost'");
 });
 
 test("GitHub out of reach is a 503 with words", async () => {

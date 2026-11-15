@@ -35,8 +35,11 @@ const DAY = 24 * 3600;
 const LONGEST = 80 * 60;
 // How long the answer about a job on its way is held (`status`).
 const HOLD_MS = 6000;
-// How long this location keeps its look at the build line (`queue`).
-const QUEUE_SECONDS = 45;
+// How long this location keeps its look at the build line (`queue`), and how often a job it can't
+// place may make it look again. GitHub gives the token's owner 5,000 calls an hour for everything
+// he and his tools do; the first day spent them all at 45 s and 10 s.
+const QUEUE_SECONDS = 120;
+const LOOK_AGAIN_SECONDS = 60;
 
 const JOB = /^[0-9a-f]{24}$/;
 const VERSION = /^\d+(\.\d+){1,3}$/;
@@ -90,7 +93,8 @@ async function build(request, url, env, ctx) {
   if (failure?.settled) return answer(200, { job });
   const asked = await recall(`asked/${job}`);
   if (asked && !(failure && (failure.at ?? 0) >= asked.at)) return answer(200, { job });
-  if (!failure && (await running(job, env, ctx))) return answer(200, { job });
+  const run = failure ? null : await running(job, env, ctx, false);
+  if (run && !run.unknown) return answer(200, { job });
 
   const address = await hashed(request.headers.get("CF-Connecting-IP") ?? "unknown");
   if (!(await count(`address/${address}`, PER_ADDRESS, ctx))) return answer(429, { error: YOUR_LIMIT });
@@ -135,12 +139,19 @@ async function waiting(job, env, ctx) {
     const { state, error, settled } = failure;
     return { state, error, settled: Boolean(settled) };
   }
-  const run = await running(job, env, ctx);
-  if (run) return run;
-  if (!asked) return null;
-  // Asked here but not in the queue as last seen: just asked (GitHub lists a run a few seconds
-  // after it is asked for), so at the end of the line; or on its way out, its answer not seen yet.
-  if (now() - asked.at < 120) return { state: "queued", ahead: (await queue(env, ctx)).queued.length };
+  // Just asked here: at the end of the line, with no call (GitHub lists a run a little after it
+  // is asked for, and the line read may be up to QUEUE_SECONDS old).
+  if (asked && now() - asked.at < 120) {
+    const line = await recall("queue");
+    return { state: "queued", ahead: line?.value.queued.length ?? 0 };
+  }
+  const run = await running(job, env, ctx, !asked);
+  if (run && !run.unknown) return run;
+  if (!asked) {
+    // GitHub can't be asked right now: the game tries again, not "lost".
+    if (run?.unknown) throw new Error(`the line of ${job} can't be read`);
+    return null;
+  }
   // Whole seconds: the game reads them as an integer (`as_u64`), and a fraction reads as none.
   return { state: "building", seconds: Math.max(0, Math.floor(now() - asked.at)) };
 }
@@ -222,17 +233,23 @@ function failureOf(job, ctx) {
 }
 
 /** The job's run on GitHub when it is queued or going: what the game is told of it. */
-async function running(job, env, ctx) {
+async function running(job, env, ctx, mayLookAgain = true) {
   const title = `build ${job}`;
-  let found = placeIn(await queue(env, ctx), title);
-  // Not in the line as last seen: it moved since (from waiting to building, between two looks),
-  // or that look came back short. Look again before calling it lost, at most every 10 s here: a
-  // job told "No such job" is given up by the game.
-  if (!found && !(await recall("queue-fresh"))) {
-    await remember("queue-fresh", { at: now() }, 10);
-    found = placeIn(await queue(env, ctx, true), title);
+  try {
+    let found = placeIn(await queue(env, ctx), title);
+    // Not in the line as last seen: it moved since (from waiting to building, between two
+    // looks), or that look came back short. Look again before calling it lost, at most every
+    // LOOK_AGAIN_SECONDS here: a job told "No such job" is given up by the game.
+    if (!found && mayLookAgain && !(await recall("queue-fresh"))) {
+      await remember("queue-fresh", { at: now() }, LOOK_AGAIN_SECONDS);
+      found = placeIn(await queue(env, ctx, true), title);
+    }
+    return found;
+  } catch (e) {
+    // GitHub refused (its hourly limit) or is down: where the job stands is unknown.
+    console.log(`the line: ${e}`);
+    return { unknown: true };
   }
-  return found;
 }
 
 /** Where `title` stands in the line `queue` read, or null when it is not in it. */
