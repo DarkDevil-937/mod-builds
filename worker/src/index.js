@@ -114,7 +114,8 @@ async function status(job, env, ctx) {
     const { state, error, settled } = failure;
     return answer(200, { state, error, settled: Boolean(settled) });
   }
-  if (asked) return answer(200, { state: "building", seconds: Math.max(0, now() - asked.at) });
+  // Whole seconds: the game reads them as an integer (`as_u64`), and a fraction reads as none.
+  if (asked) return answer(200, { state: "building", seconds: Math.max(0, Math.floor(now() - asked.at)) });
   const run = await running(job, env, ctx);
   if (run) return answer(200, run);
   return answer(404, { error: "No such job." });

@@ -150,6 +150,7 @@ test("a job on its way says it builds, and the library is GitHub's download", as
   const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
   const status = await (await call("GET", `/v1/job/${job}`)).json();
   assert.equal(status.state, "building");
+  assert.ok(Number.isInteger(status.seconds), "whole seconds, as the game reads them");
   const lib = await call("GET", `/v1/job/${job}/lib`);
   assert.equal(lib.status, 302);
   assert.equal(lib.headers.get("Location"), `https://github.com/${REPO}/releases/download/results/${job}.so`);

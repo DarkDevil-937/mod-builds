@@ -5,5 +5,8 @@
   "description": "Starling's Compile service on Cloudflare Workers (see src/index.js)",
   "scripts": {
     "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "4.162.0"
   }
 }
