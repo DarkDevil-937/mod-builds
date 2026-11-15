@@ -255,6 +255,33 @@ test("a job on its way is told after a hold, so every game asks less often; a fa
   }
 });
 
+test("a hold ends when a look finds the answer, done or failed", async () => {
+  const { job } = await (await call("POST", "/v1/build?version=0.8.0", { body: mods })).json();
+  env.HOLD_MS = 5000;
+  env.LOOK_MS = 100;
+  const lands = (name, body) =>
+    setTimeout(() => {
+      github.assets.results.set(name, new TextEncoder().encode(JSON.stringify(body)));
+      cache.entries.clear();
+    }, 250);
+  try {
+    let started = Date.now();
+    lands(`${job}.json`, { state: "done", sha256: "a".repeat(64), size: 3, build: null });
+    assert.equal((await (await call("GET", `/v1/job/${job}`)).json()).state, "done");
+    assert.ok(Date.now() - started < 2000, "told once it was there");
+
+    const other = new TextEncoder().encode("other mods ".repeat(100));
+    const second = (await (await call("POST", "/v1/build?version=0.8.0", { body: other })).json()).job;
+    started = Date.now();
+    lands(`${second}.failed.json`, { state: "failed", error: "error[E0425]", settled: true, at: Date.now() / 1000 + 60 });
+    assert.equal((await (await call("GET", `/v1/job/${second}`)).json()).state, "failed");
+    assert.ok(Date.now() - started < 2000, "told once it failed");
+  } finally {
+    env.HOLD_MS = 0;
+    delete env.LOOK_MS;
+  }
+});
+
 test("a run seen on GitHub from another location is queued or building", async () => {
   const job = "0123456789abcdef01234567";
   github.runs = [{ display_title: `build ${job}`, status: "queued", created_at: "2026-11-15T20:00:00Z" }];

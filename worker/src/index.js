@@ -33,8 +33,11 @@ export const PER_DAY = 1500;
 const DAY = 24 * 3600;
 // How long a build may take before the game is told it is lost (its own wait is 90 minutes).
 const LONGEST = 80 * 60;
-// How long the answer about a job on its way is held (`status`).
-const HOLD_MS = 6000;
+// How long the answer about a job on its way is held (`status`), and how often the hold looks for
+// its answer. The game asks again 2 s after each answer and gives a read 40 s: at 6 s, the first
+// evening spent the free plan's 100,000 requests a day (Cloudflare's 429, error 1027) in 5 hours.
+const HOLD_MS = 25000;
+const LOOK_MS = 5000;
 // How long this location keeps its look at the build line (`queue`), and how often a job it can't
 // place may make it look again. GitHub gives the token's owner 5,000 calls an hour for everything
 // he and his tools do; the first day spent them all at 45 s and 10 s.
@@ -122,9 +125,9 @@ async function build(request, url, env, ctx) {
 
 /**
  * What the game shows while it waits, and the library's checksum once it is there. A job still on
- * its way is answered after HOLD_MS: the game asks again 2 s after each answer, so holding it
- * makes every Starling, old ones too, ask about four times less while it waits (the free plan
- * counts requests). Its read waits 40 s, far beyond the hold.
+ * its way is answered after HOLD_MS, or as soon as a look finds its answer: the game asks again
+ * 2 s after each answer, so holding it makes every Starling, old ones too, ask over ten times less
+ * while it waits (the free plan counts requests). Its read waits 40 s, beyond the hold.
  */
 async function status(job, env, ctx) {
   const done = await published(`${job}.json`, ctx);
@@ -132,9 +135,16 @@ async function status(job, env, ctx) {
   const told = await waiting(job, env, ctx);
   const hold = Number(env.HOLD_MS ?? HOLD_MS);
   if (hold > 0 && (told?.state === "building" || told?.state === "queued")) {
-    await new Promise((resolve) => setTimeout(resolve, hold));
-    const doneSince = await published(`${job}.json`, ctx);
-    if (doneSince) return answer(200, doneSince);
+    const step = Math.min(hold, Number(env.LOOK_MS ?? LOOK_MS));
+    for (let held = 0; held < hold; held += step) {
+      await new Promise((resolve) => setTimeout(resolve, step));
+      const doneSince = await published(`${job}.json`, ctx);
+      if (doneSince) return answer(200, doneSince);
+      if (await failureOf(job, ctx)) {
+        const since = await waiting(job, env, ctx);
+        if (since?.state === "failed") return answer(200, since);
+      }
+    }
   }
   return told ? answer(200, told) : answer(404, { error: "No such job." });
 }
