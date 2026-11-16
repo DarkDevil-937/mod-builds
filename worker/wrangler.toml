@@ -1,4 +1,4 @@
-# Starling's Compile service (src/index.js). Deploy from this folder:
+# Starling Compiler V2 (src/index.js). Deploy this branch separately; do not overwrite the production Worker.
 #   npx wrangler login
 #   npx wrangler deploy
 #   echo <the App's id>| npx wrangler secret put GITHUB_APP_ID
@@ -11,7 +11,7 @@
 # A fork's own service names its repository here (README.md, "Your own build service"):
 # [vars]
 # REPO = "you/mod-builds"
-name = "starling-compile"
+name = "starling-compiler-v2"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
 workers_dev = true
