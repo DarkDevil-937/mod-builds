@@ -26,6 +26,7 @@ const API = "https://api.github.com";
 const UPLOADS = "https://uploads.github.com";
 const downloads = () => `https://github.com/${REPO}/releases/download`;
 const WORKFLOW = "build.yml";
+const DEFAULT_BUILD_REF = "main";
 const REQUESTS = "requests";
 const RESULTS = "results";
 
@@ -97,7 +98,8 @@ async function build(request, url, env, ctx) {
   if (body.length === 0 || body.length > MAX_BODY) {
     return answer(413, { error: "That is too big to compile." });
   }
-  const commit = (await versions())[version];
+  const buildRef = buildRefOf(env);
+  const commit = (await versions(buildRef))[version];
   if (!commit) {
     return answer(400, {
       error: "This version of Starling can't compile mods any more. Update Starling.",
@@ -127,7 +129,7 @@ async function build(request, url, env, ctx) {
   const ask = hex(crypto.getRandomValues(new Uint8Array(16)));
   await upload(env, ctx, REQUESTS, `${ask}.bin`, sealed);
   await github(env, "POST", `/actions/workflows/${WORKFLOW}/dispatches`, {
-    ref: "main",
+    ref: buildRef,
     inputs: { job, ask, key, version },
   });
   ctx.waitUntil(remember(`asked/${job}`, { at: now() }, LONGEST));
@@ -256,8 +258,13 @@ export async function seal(body) {
 }
 
 /** versions.json: each version the service compiles, and its commit. */
-async function versions() {
-  const response = await fetch(`https://raw.githubusercontent.com/${REPO}/main/versions.json`, {
+export function buildRefOf(env) {
+  const ref = String(env.BUILD_REF ?? DEFAULT_BUILD_REF).trim();
+  return /^[A-Za-z0-9._/-]+$/.test(ref) && !ref.includes("..") ? ref : DEFAULT_BUILD_REF;
+}
+
+async function versions(ref) {
+  const response = await fetch(`https://raw.githubusercontent.com/${REPO}/${encodeURIComponent(ref)}/versions.json`, {
     cf: { cacheTtl: 300, cacheEverything: true },
   });
   if (!response.ok) throw new Error(`versions.json: ${response.status}`);
