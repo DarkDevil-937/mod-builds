@@ -18,3 +18,4 @@ workers_dev = true
 
 [vars]
 REPO = "DarkDevil-937/mod-builds"
+BUILD_REF = "compiler-v2"
