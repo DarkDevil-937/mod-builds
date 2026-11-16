@@ -2,7 +2,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createDecipheriv, createHash, generateKeyPairSync, verify } from "node:crypto";
-import worker, { jobOf, seal, PER_ADDRESS, MAX_BODY } from "../src/index.js";
+import worker, { jobOf, seal, repoOf, PER_ADDRESS, MAX_BODY } from "../src/index.js";
 
 const REPO = "starling-client/mod-builds";
 const COMMIT = "ac874422ed8f892505ff73d67ae486ecfee7a516";
@@ -32,10 +32,10 @@ class GitHub {
     const url = new URL(typeof input === "string" ? input : input.url);
     const method = init.method ?? "GET";
     const json = (code, body) => new Response(JSON.stringify(body), { status: code });
-    if (url.href === `https://raw.githubusercontent.com/${REPO}/main/versions.json`) {
+    if (url.href === `https://raw.githubusercontent.com/${this.repo}/main/versions.json`) {
       return json(200, { "0.8.0": COMMIT });
     }
-    const download = url.href.match(new RegExp(`^https://github.com/${REPO}/releases/download/([\\w-]+)/(.+)$`));
+    const download = url.href.match(new RegExp(`^https://github.com/${this.repo}/releases/download/([\\w-]+)/(.+)$`));
     if (download) {
       const bytes = this.assets[download[1]]?.get(download[2]);
       return bytes ? new Response(bytes) : new Response("Not Found", { status: 404 });
@@ -49,7 +49,8 @@ class GitHub {
       this.assets[tag].set(url.searchParams.get("name"), new Uint8Array(await new Response(init.body).arrayBuffer()));
       return json(201, {});
     }
-    const path = url.pathname.replace(`/repos/${REPO}`, "");
+    if (!url.pathname.startsWith(`/repos/${this.repo}/`)) return json(404, { message: "Not Found" });
+    const path = url.pathname.replace(`/repos/${this.repo}`, "");
     if (path === "/releases/tags/requests") return json(200, { id: 1 });
     if (path === "/releases/tags/results") return json(200, { id: 2 });
     if (method === "POST" && path === "/actions/workflows/build.yml/dispatches") {
@@ -86,6 +87,8 @@ class GitHub {
   }
   token = "secret";
   minted = 0;
+  // The repository this GitHub has: the service's own, or a fork's.
+  repo = REPO;
 }
 
 const appKeys = generateKeyPairSync("rsa", {
@@ -409,6 +412,31 @@ test("with the GitHub App, calls carry the installation's token, made once while
   assert.equal((await call("POST", "/v1/build?version=0.8.0", { body: other, as: app })).status, 200);
   assert.equal(github.dispatched.length, 2);
   assert.equal(github.minted, 1, "one token for every call while it lasts");
+});
+
+test("a fork's service builds in, and serves from, the repository REPO names", async () => {
+  const fork = { ...env, REPO: " sayo/mod-builds\n" };
+  github.repo = "sayo/mod-builds";
+  const response = await call("POST", "/v1/build?version=0.8.0", { body: mods, as: fork });
+  assert.equal(response.status, 200, "versions.json read from the fork");
+  assert.equal(github.dispatched.length, 1, "the fork's build.yml started");
+  assert.equal(github.assets.requests.size, 1, "the mods sealed into the fork's requests release");
+  const job = "e123456789abcdef01234567";
+  const resumed = await worker.fetch(
+    new Request(`https://starling-compile.example/v1/job/${job}/lib`, { headers: { Range: "bytes=2-" } }),
+    fork,
+    ctx,
+  );
+  assert.equal(resumed.headers.get("Location"), `https://github.com/sayo/mod-builds/releases/download/results/${job}.so`);
+});
+
+test("REPO is an owner/name, or the service's own repository", () => {
+  assert.equal(repoOf({}), REPO);
+  assert.equal(repoOf({ REPO: "" }), REPO);
+  assert.equal(repoOf({ REPO: "just-a-name" }), REPO);
+  assert.equal(repoOf({ REPO: "a/b/c" }), REPO);
+  assert.equal(repoOf({ REPO: "https://github.com/a/b" }), REPO);
+  assert.equal(repoOf({ REPO: "Sayo-Nara/mod-builds.fork" }), "Sayo-Nara/mod-builds.fork");
 });
 
 test("GitHub out of reach is a 503 with words", async () => {

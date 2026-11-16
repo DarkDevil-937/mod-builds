@@ -12,15 +12,19 @@
 // which only the run reads (build.yml, scripts/unseal.sh). The same mods on the same commit are
 // the same job: what was built once is served again without a build.
 //
-// Secret: GITHUB_TOKEN, a fine-grained token for this repository only, with Actions and Contents
-// read and write. Nothing about a player is kept: an address only counts its builds for a day,
-// hashed, in this location's cache.
+// Secrets: GITHUB_APP_ID and GITHUB_APP_KEY (a GitHub App installed on this repository), or
+// GITHUB_TOKEN, a fine-grained token for this repository only, with Actions and Contents read and
+// write (`token`). A fork of this repository runs its own service with REPO, its "owner/name", in
+// wrangler.toml's [vars] (README.md, "Your own build service"). Nothing about a player is kept: an
+// address only counts its builds for a day, hashed, in this location's cache.
 
-const REPO = "starling-client/mod-builds";
+const MAIN_REPO = "starling-client/mod-builds";
+// The repository the service builds in and stores to: env.REPO, the same for every request of a
+// deployment, read at the start of each one.
+let REPO = MAIN_REPO;
 const API = "https://api.github.com";
 const UPLOADS = "https://uploads.github.com";
-const DOWNLOADS = `https://github.com/${REPO}/releases/download`;
-const VERSIONS = `https://raw.githubusercontent.com/${REPO}/main/versions.json`;
+const downloads = () => `https://github.com/${REPO}/releases/download`;
 const WORKFLOW = "build.yml";
 const REQUESTS = "requests";
 const RESULTS = "results";
@@ -60,6 +64,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
+    REPO = repoOf(env);
     try {
       if (request.method === "POST" && url.pathname === "/v1/build") {
         return await build(request, url, env, ctx);
@@ -75,6 +80,12 @@ export default {
     }
   },
 };
+
+/** env.REPO when it is an "owner/name", else this service's own repository. */
+export function repoOf(env) {
+  const repo = String(env.REPO ?? "").trim();
+  return /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : MAIN_REPO;
+}
 
 /** A new build of `version` with the body's mods, or the job that already has them. */
 async function build(request, url, env, ctx) {
@@ -190,9 +201,9 @@ async function library(job, request) {
   const name = `${job}.so`;
   const from = /^bytes=(\d+)-$/.exec(request.headers.get("Range") ?? "");
   if (from && Number(from[1]) > 0) {
-    const shard = await fetch(`${DOWNLOADS}/${shardOf(name)}/${name}`, { method: "HEAD", redirect: "follow" });
+    const shard = await fetch(`${downloads()}/${shardOf(name)}/${name}`, { method: "HEAD", redirect: "follow" });
     const tag = shard.status === 404 ? RESULTS : shardOf(name);
-    return new Response(null, { status: 302, headers: { Location: `${DOWNLOADS}/${tag}/${name}` } });
+    return new Response(null, { status: 302, headers: { Location: `${downloads()}/${tag}/${name}` } });
   }
   const upstream = await fetchResult(name);
   if (upstream.status === 404) return answer(404, { error: "No such build. Compile again." });
@@ -215,7 +226,7 @@ function shardOf(name) {
 /** One of a build's files: in its shard, or in `results`, where the first evening's builds are. */
 async function fetchResult(name) {
   for (const tag of [shardOf(name), RESULTS]) {
-    const response = await fetch(`${DOWNLOADS}/${tag}/${name}`, { redirect: "follow" });
+    const response = await fetch(`${downloads()}/${tag}/${name}`, { redirect: "follow" });
     if (response.status !== 404) return response;
   }
   return new Response("Not Found", { status: 404 });
@@ -246,7 +257,9 @@ export async function seal(body) {
 
 /** versions.json: each version the service compiles, and its commit. */
 async function versions() {
-  const response = await fetch(VERSIONS, { cf: { cacheTtl: 300, cacheEverything: true } });
+  const response = await fetch(`https://raw.githubusercontent.com/${REPO}/main/versions.json`, {
+    cf: { cacheTtl: 300, cacheEverything: true },
+  });
   if (!response.ok) throw new Error(`versions.json: ${response.status}`);
   return response.json();
 }
