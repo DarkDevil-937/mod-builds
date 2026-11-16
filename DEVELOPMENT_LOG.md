@@ -16,3 +16,12 @@
 - Confirmed `mod-builds` already implements Starling's HTTPS protocol: `POST /v1/build?version=V`, `GET /v1/job/<id>`, and `GET /v1/job/<id>/lib`.
 - V2 will preserve that protocol and isolate its Worker deployment and compiler changes. The actual `Button.action` fix remains unimplemented until the mod's intended action semantics can be established.
 - Added `COMPILER_V2_PLAN.md` with architecture, safety boundaries, and acceptance checks. No deployment or successful compile is claimed.
+
+
+## 2026-11-16 — Compiler V2 protocol isolation and test run
+
+- Worker now reads `versions.json` from configurable `BUILD_REF` and dispatches `build.yml` on the same ref; default remains `main` for the production Worker.
+- V2 wrangler config sets `BUILD_REF = compiler-v2` and Worker name `starling-compiler-v2`, keeping the production Worker untouched.
+- Added tests for branch-specific version lookup and isolated workflow dispatch. GitHub Actions run 43894497024 passed all 25 Worker tests.
+- Cloudflare upload was accepted, but final deployment failed with Cloudflare error 10007 because the new Worker resource `starling-compiler-v2` does not yet exist in the Cloudflare account. The existing production Worker was not modified. Create the new Worker in Cloudflare and connect it to this repository/branch with root directory `worker`, then rerun deploy.
+- No V2 HTTPS endpoint is live yet; no mod compilation has been claimed or tested.
