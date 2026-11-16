@@ -29,3 +29,12 @@ The Worker dispatches `build.yml` in this build-service repository. Before this 
 - The existing Worker already speaks Starling's custom HTTPS protocol. V2 should preserve it: POST `/v1/build?version=V`, GET `/v1/job/<24-hex-id>`, GET `/v1/job/<24-hex-id>/lib`.
 - Read `COMPILER_V2_PLAN.md` before making changes. V2 needs its own Worker name and URL before deployment.
 - The original Rust E0560 `title::Button.action` issue is not fixed yet. Do not remove or rewrite the field without seeing the actual mod source and understanding the event mapping.
+
+
+## Compiler V2 latest status (2026-11-16)
+- Branch: `compiler-v2`.
+- Worker name in `worker/wrangler.toml`: `starling-compiler-v2`; branch selector `BUILD_REF=compiler-v2`.
+- Worker tests: 25/25 pass in Actions run 43894497024.
+- Deployment: blocked because Cloudflare reports Worker resource `starling-compiler-v2` does not exist (error 10007). Existing production Worker `starling-compile` was not touched.
+- Required account-side step: create a separate Cloudflare Worker named `starling-compiler-v2`, connect GitHub repo `DarkDevil-937/mod-builds`, branch `compiler-v2`, root directory `worker`. Then rerun the Deploy Cloudflare Worker workflow or let the Git integration deploy. Ensure the new Worker has the GitHub token secret `GITHUB_TOKEN` (workflow step sets it from repo secret `STARLING_GITHUB_TOKEN` when deploy workflow runs).
+- After deployment, test an actual mod through V2 before changing Starling's custom server URL. Production remains `https://starling-compile.airtelat5.workers.dev` until V2 passes.
