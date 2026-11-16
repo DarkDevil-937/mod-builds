@@ -9,6 +9,10 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Test the Cloudflare Worker
         working-directory: worker
         run: |
