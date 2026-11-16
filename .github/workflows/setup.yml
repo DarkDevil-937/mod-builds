@@ -9,6 +9,11 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     steps:
+      - name: Test the Cloudflare Worker
+        working-directory: worker
+        run: |
+          npm ci
+          npm test
       - name: Create build storage releases
         env:
           GH_TOKEN: ${{ github.token }}
