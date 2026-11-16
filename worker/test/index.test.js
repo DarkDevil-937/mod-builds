@@ -2,7 +2,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createDecipheriv, createHash, generateKeyPairSync, verify } from "node:crypto";
-import worker, { jobOf, seal, repoOf, PER_ADDRESS, MAX_BODY } from "../src/index.js";
+import worker, { jobOf, seal, repoOf, buildRefOf, PER_ADDRESS, MAX_BODY } from "../src/index.js";
 
 const REPO = "starling-client/mod-builds";
 const COMMIT = "ac874422ed8f892505ff73d67ae486ecfee7a516";
@@ -446,4 +446,23 @@ test("GitHub out of reach is a 503 with words", async () => {
   const response = await call("POST", "/v1/build?version=0.8.0", { body: mods });
   assert.equal(response.status, 503);
   assert.match((await response.json()).error, /can't reach GitHub/);
+});
+
+
+test("Compiler V2 dispatches builds on its isolated branch", async () => {
+  const isolated = { ...env, BUILD_REF: "compiler-v2" };
+  const response = await call("POST", "/v1/build?version=0.8.0", {
+    body: new TextEncoder().encode("compiler v2 isolated test"),
+    as: isolated,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(github.dispatched.length, 1);
+  assert.equal(github.dispatched[0].ref, "compiler-v2");
+});
+
+test("invalid build refs fall back to main", () => {
+  assert.equal(buildRefOf({}), "main");
+  assert.equal(buildRefOf({ BUILD_REF: "compiler-v2" }), "compiler-v2");
+  assert.equal(buildRefOf({ BUILD_REF: "../main" }), "main");
+  assert.equal(buildRefOf({ BUILD_REF: "bad ref" }), "main");
 });
