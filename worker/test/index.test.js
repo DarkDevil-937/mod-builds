@@ -32,7 +32,7 @@ class GitHub {
     const url = new URL(typeof input === "string" ? input : input.url);
     const method = init.method ?? "GET";
     const json = (code, body) => new Response(JSON.stringify(body), { status: code });
-    if (url.href === `https://raw.githubusercontent.com/${this.repo}/main/versions.json`) {
+    if (url.host === "raw.githubusercontent.com" && url.pathname.endsWith("/versions.json")) {
       return json(200, { "0.8.0": COMMIT });
     }
     const download = url.href.match(new RegExp(`^https://github.com/${this.repo}/releases/download/([\\w-]+)/(.+)$`));
