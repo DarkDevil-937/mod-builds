@@ -15,3 +15,6 @@ name = "starling-compile"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
 workers_dev = true
+
+[vars]
+REPO = "DarkDevil-937/mod-builds"
