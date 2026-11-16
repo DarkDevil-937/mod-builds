@@ -21,3 +21,11 @@ The Worker dispatches `build.yml` in this build-service repository. Before this 
 2. Wait for the `base` workflow to finish successfully. It must create cache key `base-1f7a55856a8bfa605e27145de5a1e66c2fd35015`.
 3. Then test compiling the same native mod in Starling. No APK reinstall is needed because only the server changed.
 4. If the compile still fails, inspect the new build's `build` workflow log. The previous known error was Rust E0560: `title::Button` has no field named `action`. Do not blindly remove the field; inspect the exact mod source and current Button API before adding a compatibility rewrite.
+
+
+## Starling Compiler V2 (new work)
+- Development branch: `compiler-v2` in `DarkDevil-937/mod-builds`.
+- Production branch `main` and current Worker URL `https://starling-compile.airtelat5.workers.dev` are not changed.
+- The existing Worker already speaks Starling's custom HTTPS protocol. V2 should preserve it: POST `/v1/build?version=V`, GET `/v1/job/<24-hex-id>`, GET `/v1/job/<24-hex-id>/lib`.
+- Read `COMPILER_V2_PLAN.md` before making changes. V2 needs its own Worker name and URL before deployment.
+- The original Rust E0560 `title::Button.action` issue is not fixed yet. Do not remove or rewrite the field without seeing the actual mod source and understanding the event mapping.
