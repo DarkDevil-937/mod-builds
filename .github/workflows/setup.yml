@@ -1,0 +1,29 @@
+name: setup
+run-name: prepare self-hosted mod builder
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create build storage releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for tag in requests results results-{0..9} results-{a..f}; do
+            if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+              echo "Release $tag already exists"
+            else
+              gh release create "$tag" --repo "$GH_REPO" --prerelease --title "$tag" --notes ""
+            fi
+          done
+      - name: Start clean base build for Starling 0.8.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run base.yml --repo "$GH_REPO" --ref main -f version=0.8.0 -f tools=starling
