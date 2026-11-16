@@ -1,6 +1,11 @@
 name: Deploy Cloudflare Worker
 
 on:
+  push:
+    branches: [compiler-v2]
+    paths:
+      - "worker/**"
+      - ".github/workflows/deploy-worker.yml"
   workflow_dispatch:
 
 permissions:
@@ -24,6 +29,9 @@ jobs:
         working-directory: worker
         run: npm install
 
+      - name: Test Worker
+        working-directory: worker
+        run: npm test
       - name: Deploy Worker
         working-directory: worker
         env:
